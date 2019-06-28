@@ -76,8 +76,9 @@ class Munkrs(nn.Module):
             if self.is_cuda:
                 hidden = torch.zeros(2*2, batch, self.hidden_dim).cuda()
             else:
-                hidden = (torch.zeros(2, batch, self.hidden_dim),
-                          torch.zeros(2, batch, self.hidden_dim))
+                hidden = torch.zeros(2*2, batch, self.hidden_dim)
+                # hidden = (torch.zeros(2, batch, self.hidden_dim),
+                          # torch.zeros(2, batch, self.hidden_dim))
 
         else:
             if self.is_cuda:
