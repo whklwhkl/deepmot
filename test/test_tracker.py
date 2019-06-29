@@ -37,5 +37,10 @@ class T_detector(unittest.TestCase):
     def test_feature(self):
         return
 
+class T_curator(unittest.TestCase):
+    video_path ='‪C:\\Users\\phiii\\Downloads\\MOT17-04-SDP.mp4'
+    curator = tracker.Curator(video_path)
+    curator.show()
+
 if __name__ == '__main__':
     unittest.main()

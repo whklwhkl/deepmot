@@ -1,3 +1,4 @@
+import cv2
 import torch
 import torch.nn as nn
 from torchvision.ops import box_iou, roi_align
@@ -31,8 +32,10 @@ class Detector:
         self.model.register_forward_hook(get)   # locale some layer
 
     def detection(self, img):
-        box = img
-        return box, roi_pooling(self.feature_map, box)
+        img = torch.FloatTensor(img)
+        img = img.permute(2, 0, 1)[None]
+        box = self.model(img)
+        return box, roi_align(self.feature_map, [box], [3,3], 1.)
 
 
 class Track:
@@ -134,11 +137,42 @@ class Tracker:
 
 class Curator:
 
-    def __init__(self):
+    def __init__(self, video_path=None):
+        self.video_path = video_path
         self.objects = []   # type: [Object]
 
-    def show(self):
-        pass
+    def show(self, callback=lambda x:x):
+        cap = cv2.VideoCapture(0 or self.video_path)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = callback(frame)
+            cv2.imshow('video', frame)
+            if cv2.waitKey(1) == 27:
+                break
 
     def update(self, new_objects:[Object]):
         self.objects = new_objects
+
+
+if __name__ == '__main__':
+    import pickle
+    import numpy as np
+    import os.path as osp, os
+
+    curator = Curator('MOT17-04-SDP.mp4')
+
+    class MockDetector(nn.Module):
+        def __init__(self, det_path):
+            super().__init__()
+            self.counter = 0
+            self.frame2box = np.load(det_path, allow_pickle=True).tolist()  # start with '1', all lists
+
+        def forward(x):
+            self.counter += 1
+            return torch.FloatTensor(self.frame2box[str(object=self.counter)])
+
+    det_net = MockDetector('det.npy')
+    det = Detector(det_net)
+    curator.show()
