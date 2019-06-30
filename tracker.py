@@ -9,7 +9,7 @@ def distance(box1, box2):
     center1 = center(box1)
     center2 = center(box2)
     delta = center1[:,None] - center2[None]
-    return delta.norm(2, dim=-1)
+    return 1 - torch.exp(-5 * delta.norm(2, dim=-1))
 
 
 class Object:
@@ -50,7 +50,7 @@ class Track:
         self.health = Track.HEALTH
         self.is_visible = True
         self.is_candidate = True
-        self.velocity_2d = torch.zeros(4)
+        self.velocity_2d = torch.zeros(5)
         self.velocity_3d = torch.zeros(3)  # todo: estimate this using 2d info
         self.id = Track.CURRENT_ID
         Track.CURRENT_ID += 1
@@ -63,6 +63,7 @@ class Track:
         self.age += 1
         self.health = Track.HEALTH
         self.velocity_2d = new_box - self.box
+        self.velocity_2d[4] = 0
         self.box = new_box
         self.is_candidate = self.age < Track.PROBATION
 
@@ -75,7 +76,7 @@ class Track:
         self.is_visible = False
         self.box = self.predict_box()
 
-    def is_dead(self):
+    def is_dying(self):
         return self.health <= 0
 
 
@@ -91,37 +92,48 @@ class Tracker:
 
     def update(self, boxes:[torch.Tensor]):
         ids, anchors = self._gather()
-        iou_matrix = box_iou(anchors, boxes)    # type: torch.Tensor
-        iou_matrix[iou_matrix < Tracker.CANDIDATE_IOU] += 1e5
-        distance_matrix = 1 - iou_matrix + distance(anchors, boxes)
-        # todo: add appearance distance
-        trackers2boxes = self._assign(distance_matrix/2)
-        unassigned_box_idx = set(range(iou_matrix.shape[1]))
+        if len(ids):
+            anchors = torch.stack(anchors)
+            iou_matrix = box_iou(anchors[:,:4], boxes[:,:4])    # type: torch.Tensor
+            # iou_matrix[iou_matrix < Tracker.CANDIDATE_IOU] += 1e5
+            distance_matrix = 1 - iou_matrix + distance(anchors, boxes)
+            # todo: add appearance distance
+            trackers2boxes = self._assign(distance_matrix/2)
+            unassigned_box_idx = set(range(iou_matrix.shape[1]))
 
-        for track_id, box_index in zip(ids, trackers2boxes):
-            try:
-                self.tracks[track_id].update(boxes[box_index])
-                unassigned_box_idx -= {box_index}
-            except:     # don't have an assigned box
-                self.tracks[track_id].update_null()
-                if self.tracks[track_id].is_dying():
-                    self._kill(track_id)
+            for track_id, box_index in zip(ids, trackers2boxes):
+                try:
+                    self.tracks[track_id].update(boxes[box_index])
+                    unassigned_box_idx -= {box_index}
+                except:     # don't have an assigned box
+                    self.tracks[track_id].update_null()
+                    if self.tracks[track_id].is_dying():
+                        self._kill(track_id)
 
-        max_iou_per_box = iou_matrix.max(0)
+            max_iou_per_box = iou_matrix.max(0)[0]
 
-        for idx in unassigned_box_idx:
-            if max_iou_per_box[idx] < Tracker.BIRTH_IOU:
-                self._birth(boxes[idx])
+            for idx in unassigned_box_idx:
+                # breakpoint()
+                if max_iou_per_box[idx] < Tracker.BIRTH_IOU:
+                    self._birth(boxes[idx])
+        else:
+            for box in boxes:
+                self._birth(box)
 
     def _gather(self):
         ids, anchors = [], []
         for id, track in self.tracks.items():
             ids += [id]
             anchors += [track.box]
-        return ids, torch.stack(anchors)
+        return ids, anchors
 
     def _assign(self, distance_matrix:torch.Tensor):
-        trackers2boxes = self.model(distance_matrix)        # scores
+        # breakpoint()
+        self.model.hidden_row = self.model.init_hidden(1)
+        self.model.hidden_col = self.model.init_hidden(1)
+        with torch.no_grad():
+            # breakpoint()
+            trackers2boxes = self.model(distance_matrix[None])[0]        # scores
         trackers2boxes_ = torch.cat([trackers2boxes,
                                      Tracker.MINIMUM_CONFIDENCE * torch.ones([trackers2boxes.shape[0], 1])],
                                     -1)
